@@ -26,8 +26,10 @@ typedef enum {
 
 typedef enum {
     PREPARE_SUCCESS,
-    PREPARE_UNRECOGNIZED_STATEMENT,
-    PREPARE_SYNTAX_ERROR
+    PREPARE_NEGATIVE_ID,
+    PREPARE_STRING_TOO_LONG,
+    PREPARE_SYNTAX_ERROR,
+    PREPARE_UNRECOGNIZED_STATEMENT
 } PrepareResult;
 
 typedef enum {
@@ -39,8 +41,11 @@ typedef enum {
 #define COLUMN_EMAIL_SIZE 255
 typedef struct {
     uint32_t id;
-    char username[COLUMN_USERNAME_SIZE];
-    char email[COLUMN_EMAIL_SIZE];
+    /**
+     * C 字符串应该以 null 字符结尾，解决方案是分配一个额外的字节
+     */
+    char username[COLUMN_USERNAME_SIZE + 1];
+    char email[COLUMN_EMAIL_SIZE + 1];
 } Row;
 
 typedef struct {
@@ -218,17 +223,49 @@ MetaCommandResult do_meta_command(InputBuffer* input_buffer, Table* table) {
     }
 }
 
+PrepareResult prepare_insert(InputBuffer* input_buffer, Statement* statement) {
+    statement->type = STATEMENT_INSERT;
+
+    /**
+     * 在输入缓冲区上连续调用 strtok，
+     * 每当到达一个分隔符（在我们的例子中是空格）时，
+     * 就插入一个空字符，从而将输入缓冲区分成子串。
+     * 它会返回一个指向子串起点的指针。
+     */
+    char* keyword = strtok(input_buffer->buffer, " ");
+    char* id_string = strtok(NULL, " ");
+    char* username = strtok(NULL, " ");
+    char* email = strtok(NULL, " ");
+
+    if (id_string == NULL || username == NULL || email == NULL) {
+        return PREPARE_SYNTAX_ERROR;
+    }
+
+    int id = atoi(id_string);
+    if (id < 0) {
+        return PREPARE_NEGATIVE_ID;
+    }
+    /**
+     * 对每个文本值调用 strlen() 来查看是否过长
+     */
+    if (strlen(username) > COLUMN_USERNAME_SIZE) {
+        return PREPARE_STRING_TOO_LONG;
+    }
+    if (strlen(email) > COLUMN_EMAIL_SIZE) {
+        return PREPARE_STRING_TOO_LONG;
+    }
+
+    statement->row_to_insert.id = id;
+    strcpy(statement->row_to_insert.username, username);
+    strcpy(statement->row_to_insert.email, email);
+
+    return PREPARE_SUCCESS;
+}
+
 PrepareResult prepare_statement(InputBuffer* input_buffer,
                                 Statement* statement) {
     if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
-        statement->type = STATEMENT_INSERT;
-        int args_assigned = sscanf(
-            input_buffer->buffer, "insert %d %s %s", &(statement->row_to_insert.id),
-            statement->row_to_insert.username, statement->row_to_insert.email);
-        if (args_assigned < 3) {
-            return PREPARE_SYNTAX_ERROR;
-        }
-        return PREPARE_SUCCESS;
+        return prepare_insert(input_buffer, statement);
     }
     if (strcmp(input_buffer->buffer, "select") == 0) {
         statement->type = STATEMENT_SELECT;
@@ -242,11 +279,8 @@ PrepareResult prepare_statement(InputBuffer* input_buffer,
  * 让 execute_statement 读/写我们的表结构
  */
 ExecuteResult execute_insert(Statement* statement, Table* table) {
-    fprintf(stderr, "DEBUG: 进入 execute_insert 函数. num_rows: %d, TABLE_MAX_ROWS: %d\n", table->num_rows, TABLE_MAX_ROWS);
     // 检查表是否已满
     if (table->num_rows >= TABLE_MAX_ROWS) {
-        fprintf(stderr, "DEBUG: Table full. num_rows: %d, TABLE_MAX_ROWS: %d\n", table->num_rows, TABLE_MAX_ROWS);
-        fprintf(stderr, "DEBUG: execute_insert 函数返回 EXECUTE_TABLE_FULL 给 execute_statement 函数.\n");
         return EXECUTE_TABLE_FULL;
     }
     // 获取要插入的行的指针
@@ -256,8 +290,6 @@ ExecuteResult execute_insert(Statement* statement, Table* table) {
     // 更新表中的行数
     table->num_rows += 1;
 
-    fprintf(stderr, "DEBUG: Table not full. num_rows: %d, TABLE_MAX_ROWS: %d\n", table->num_rows, TABLE_MAX_ROWS);
-    fprintf(stderr, "DEBUG: execute_insert 函数返回 EXECUTE_SUCCESS 给 execute_statement 函数.\n");
     return EXECUTE_SUCCESS;
 }
 
@@ -310,6 +342,12 @@ int main(int argc, char* argv[]) {
         switch (prepare_statement(input_buffer, &statement)) {
             case (PREPARE_SUCCESS):
                 break;
+            case (PREPARE_NEGATIVE_ID):
+                printf("ID must be positive.\n");
+                continue;
+            case (PREPARE_STRING_TOO_LONG):
+                printf("String is too long.\n");
+                continue;
             case (PREPARE_SYNTAX_ERROR):
                 printf("Syntax error. Could not parse statement.\n");
                 continue;
@@ -321,11 +359,9 @@ int main(int argc, char* argv[]) {
 
         switch (execute_statement(&statement, table)) {
             case (EXECUTE_SUCCESS):
-                fprintf(stderr, "DEBUG: 输出 Executed.\n");
                 printf("Executed.\n");
                 break;
             case (EXECUTE_TABLE_FULL):
-                fprintf(stderr, "DEBUG: 输出 Error: Table full.\n");
                 printf("Error: Table full.\n");
                 break;
         }
