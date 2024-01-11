@@ -72,7 +72,7 @@ describe 'database' do
 
   it 'prints an error message if id is negative' do
     script = [
-      "insert -1 shadow_user foo@bar.com",
+      "insert -1 cstack foo@bar.com",
       "select",
       ".exit",
     ]
