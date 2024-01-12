@@ -1,7 +1,11 @@
 describe 'database' do
+  before do
+    `rm -rf test.db`
+  end
+
   def run_script(commands)
     raw_output = nil
-    IO.popen("./db", "r+") do |pipe|
+    IO.popen("./db test.db", "r+") do |pipe|
       commands.each do |command|
         pipe.puts command
       end
@@ -93,6 +97,7 @@ describe 'database' do
       "db > Executed.",
       "db > ",
     ])
+    
     result2 = run_script([
       "select",
       ".exit",
