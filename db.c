@@ -449,6 +449,33 @@ Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
     return cursor;
 }
 
+Cursor* internal_node_find(Table* table, uint32_t page_num, uint32_t key) {
+    void* node = get_page(table->pager, page_num);
+    uint32_t num_keys = *internal_node_num_keys(node);
+
+    /* 二分查找要搜索的子节点索引 */
+    uint32_t min_index = 0;
+    uint32_t max_index = num_keys; /* 子节点数量比键数量多 1 */
+
+    while (min_index != max_index) {
+        uint32_t index = (min_index + max_index) / 2;
+        uint32_t key_to_right = *internal_node_key(node, index);
+        if (key_to_right >= key) {
+            max_index = index;
+        } else {
+            min_index = index + 1;
+        }
+    }
+    uint32_t child_num = *internal_node_child(node, min_index);
+    void* child = get_page(table->pager, child_num);
+    switch (get_node_type(child)) {
+        case NODE_LEAF:
+            return leaf_node_find(table, child_num, key);
+        case NODE_INTERNAL:
+            return internal_node_find(table, child_num, key);
+    }
+}
+
 /**
  * 返回给定键的位置。
  * 如果键不存在，则返回应插入的位置
@@ -464,9 +491,8 @@ Cursor* table_find(Table* table, uint32_t key) {
         // 在叶节点中查找键的位置
         return leaf_node_find(table, root_page_num, key);
     } else {
-        // 需要实现在内部节点中搜索
-        printf("Need to implement searching an internal node\n");
-        exit(EXIT_FAILURE);
+        // 在内部节点中搜索
+        return internal_node_find(table, root_page_num, key);
     }
 }
 
